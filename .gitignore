@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+# But keep build script
+!build.js
+
+# Logs
+*.log
+logs/
+debug.log
+dmx-monitor.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+
+# Test/recording files
+*.dmxrec
+
+# Package lock (optional - some prefer to commit this)
+# package-lock.json

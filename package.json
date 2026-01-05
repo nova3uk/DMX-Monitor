@@ -1,0 +1,96 @@
+{
+  "name": "dmx-monitor",
+  "version": "1.0.0",
+  "description": "Console application to monitor, record and play back sACN and Art-Net DMX traffic",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "dmx-monitor": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "clean": "rimraf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "pkg": "node build.js",
+    "pkg:win": "node build.js --target=win",
+    "pkg:mac": "node build.js --target=mac",
+    "pkg:linux": "node build.js --target=linux",
+    "pkg:all": "node build.js --target=all"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "dist/**/*.js.map",
+    "dist/**/*.d.ts.map",
+    "README.md",
+    "LICENCE"
+  ],
+  "pkg": {
+    "scripts": [
+      "dist/**/*.js"
+    ],
+    "assets": [
+      "package.json",
+      "node_modules/blessed/**/*"
+    ],
+    "targets": [
+      "node20-win-x64",
+      "node20-macos-x64",
+      "node20-linux-x64"
+    ],
+    "outputPath": "dist"
+  },
+  "keywords": [
+    "dmx",
+    "dmx512",
+    "sacn",
+    "artnet",
+    "art-net",
+    "e1.31",
+    "streaming-acn",
+    "lighting",
+    "stage-lighting",
+    "monitor",
+    "recorder",
+    "playback",
+    "cli",
+    "terminal"
+  ],
+  "author": {
+    "name": "Michael Lines",
+    "url": "https://www.dmxdesktop.com"
+  },
+  "homepage": "https://github.com/nova3uk/DMX-Monitor",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nova3uk/DMX-Monitor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nova3uk/DMX-Monitor/issues"
+  },
+  "license": "GPL-3.0",
+  "dependencies": {
+    "artnet": "^1.4.0",
+    "blessed": "^0.1.81",
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "inquirer": "^8.2.6",
+    "sacn": "^4.4.0",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/blessed": "^0.1.25",
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^20.10.0",
+    "@yao-pkg/pkg": "^5.15.0",
+    "@yao-pkg/pkg": "^5.15.0",
+    "rimraf": "^5.0.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
