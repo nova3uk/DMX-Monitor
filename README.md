@@ -19,6 +19,22 @@ A Node.js console application for monitoring, recording, and playing back sACN (
 
 ## Installation
 
+### Prebuilt Binaries (Recommended)
+
+Prebuilt standalone executables are available for Windows, macOS, and Linux on the [Releases page](https://github.com/nova3uk/DMX-Monitor/releases). These binaries include Node.js bundled inside, so **Node.js does NOT need to be installed** on your system.
+
+1. Go to the [latest release](https://github.com/nova3uk/DMX-Monitor/releases/latest)
+2. Download the binary for your platform:
+   - **Windows**: `dmx-monitor-v*-win-x64.exe`
+   - **macOS**: `dmx-monitor-v*-macos-x64`
+   - **Linux**: `dmx-monitor-v*-linux-x64`
+3. Make the file executable (macOS/Linux): `chmod +x dmx-monitor-v*-macos-x64` or `chmod +x dmx-monitor-v*-linux-x64`
+4. Run it directly!
+
+### From Source
+
+If you prefer to build from source or need to modify the code:
+
 ```bash
 # Clone or download the project
 cd dmx-monitor
@@ -102,6 +118,7 @@ dmx-monitor --playback recording.dmxrec -u 5 --priority 150
 ### Recording DMX Data
 
 While monitoring, press `R` to start/stop recording. Recordings are saved as `.dmxrec` files containing:
+
 - Protocol and universe information
 - Timestamped DMX frames
 - Compressed binary format for efficient storage
@@ -111,6 +128,7 @@ Recording files are saved to the current directory by default, or to the directo
 ### Playing Back Recordings
 
 Use `--playback <file>` to play back a recording. The playback mode:
+
 - Transmits DMX data via sACN or Art-Net (same protocol as recorded, or override with `-p`)
 - Displays the DMX values in real-time
 - Supports speed adjustment (0.1x to 10x)
@@ -211,7 +229,9 @@ The project can be compiled into standalone executables using `pkg`. This bundle
 
 **Important:** The executables created by `pkg` are truly standalone - they include the Node.js runtime bundled inside, so **Node.js does NOT need to be installed** on the target machine. The executable size (~50MB) is normal because it includes the entire Node.js runtime (~30-40MB) plus your application code and dependencies.
 
-### Build
+**Note:** When you create a GitHub release, binaries are automatically built for all platforms and attached to the release via GitHub Actions.
+
+### Build Locally
 
 ```bash
 # Build for current platform
@@ -251,16 +271,16 @@ This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**
 
 This project uses the following open-source dependencies:
 
-| Package | License | Description |
-|---------|---------|-------------|
-| [sacn](https://github.com/k-yle/sACN) | Apache-2.0 | sACN (E1.31) protocol implementation |
-| [artnet](https://github.com/hobbyquaker/artnet) | MIT | Art-Net protocol implementation |
-| [blessed](https://github.com/chjj/blessed) | MIT | Terminal UI library |
-| [commander](https://github.com/tj/commander.js) | MIT | Command-line argument parsing |
-| [inquirer](https://github.com/SBoudrias/Inquirer.js) | MIT | Interactive command-line prompts |
-| [winston](https://github.com/winstonjs/winston) | MIT | Logging library |
-| [chalk](https://github.com/chalk/chalk) | MIT | Terminal string styling |
-| [rxjs](https://github.com/reactivex/rxjs) | Apache-2.0 | Reactive extensions (dependency of sacn) |
+| Package                                              | License    | Description                              |
+| ---------------------------------------------------- | ---------- | ---------------------------------------- |
+| [sacn](https://github.com/k-yle/sACN)                | Apache-2.0 | sACN (E1.31) protocol implementation     |
+| [artnet](https://github.com/hobbyquaker/artnet)      | MIT        | Art-Net protocol implementation          |
+| [blessed](https://github.com/chjj/blessed)           | MIT        | Terminal UI library                      |
+| [commander](https://github.com/tj/commander.js)      | MIT        | Command-line argument parsing            |
+| [inquirer](https://github.com/SBoudrias/Inquirer.js) | MIT        | Interactive command-line prompts         |
+| [winston](https://github.com/winstonjs/winston)      | MIT        | Logging library                          |
+| [chalk](https://github.com/chalk/chalk)              | MIT        | Terminal string styling                  |
+| [rxjs](https://github.com/reactivex/rxjs)            | Apache-2.0 | Reactive extensions (dependency of sacn) |
 
 All production dependencies are licensed under MIT, Apache-2.0, ISC, BSD-3-Clause, or 0BSD - all of which are compatible with GPL-3.0.
 
