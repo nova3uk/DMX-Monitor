@@ -20,7 +20,7 @@ jobs:
             binary: dmx-monitor-win.exe
           - os: macos-latest
             platform: mac
-            binary: dmx-monitor-macos
+            binary: dmx-monitor-mac
 
     steps:
       - name: Checkout code
