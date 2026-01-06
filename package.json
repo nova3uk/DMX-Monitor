@@ -1,7 +1,7 @@
 {
   "name": "dmx-monitor",
   "version": "1.0.0",
-  "description": "Console application to monitor, record and play back sACN and Art-Net DMX traffic",
+  "description": "A Node.js console application for monitoring, recording, and playing back sACN (E1.31) and Art-Net DMX traffic in real-time.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
