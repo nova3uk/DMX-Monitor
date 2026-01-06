@@ -20,7 +20,7 @@ jobs:
             binary: dmx-monitor-win.exe
           - os: macos-latest
             platform: mac
-            binary: dmx-monitor-macos
+            binary: dmx-monitor-mac
 
     steps:
       - name: Checkout code
@@ -75,7 +75,7 @@ jobs:
           # Find binaries (they're in subdirectories named after the artifact)
           find . -type f -name "dmx-monitor-linux" -exec mv {} "final/dmx-monitor-v${{ steps.version.outputs.version }}-linux-x64" \;
           find . -type f -name "dmx-monitor-win.exe" -exec mv {} "final/dmx-monitor-v${{ steps.version.outputs.version }}-win-x64.exe" \;
-          find . -type f -name "dmx-monitor-macos" -exec mv {} "final/dmx-monitor-v${{ steps.version.outputs.version }}-macos-x64" \;
+          find . -type f -name "dmx-monitor-mac" -exec mv {} "final/dmx-monitor-v${{ steps.version.outputs.version }}-macos-x64" \;
 
           cd final
 
