@@ -15,9 +15,11 @@ export type UniverseNumber = number;
 export interface NetworkInterface {
   name: string;
   address: string;
-  family: 'IPv4' | 'IPv6';
+  family: "IPv4" | "IPv6";
   internal: boolean;
   mac?: string;
+  /** Netmask for the interface (e.g., "255.255.255.0") */
+  netmask?: string;
 }
 
 /** CLI arguments parsed from command line */
@@ -47,6 +49,8 @@ export interface MonitorConfig {
   protocol: Protocol;
   bindAddress: string;
   interfaceName?: string;
+  /** Netmask for the selected interface (used for Art-Net broadcast calculation) */
+  netmask?: string;
   useMulticast: boolean;
   useBroadcast: boolean;
   selectedUniverse?: number;
@@ -105,6 +109,7 @@ export interface ProtocolEvents {
   packet: (packet: DMXPacket) => void;
   error: (error: Error) => void;
   universeDiscovered: (universe: number) => void;
+  nodeDiscovered: (node: ArtNetNode) => void;
   close: () => void;
 }
 

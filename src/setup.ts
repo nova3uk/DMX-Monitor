@@ -25,15 +25,16 @@ export function getNetworkInterfaces(): NetworkInterface[] {
 
   for (const [name, addrs] of Object.entries(networkInterfaces)) {
     if (!addrs) continue;
-    
+
     for (const addr of addrs) {
-      if (addr.family === 'IPv4' && !addr.internal) {
+      if (addr.family === "IPv4" && !addr.internal) {
         interfaces.push({
           name,
           address: addr.address,
-          family: 'IPv4',
+          family: "IPv4",
           internal: addr.internal,
           mac: addr.mac,
+          netmask: addr.netmask,
         });
       }
     }
@@ -41,10 +42,11 @@ export function getNetworkInterfaces(): NetworkInterface[] {
 
   // Also add loopback for testing
   interfaces.push({
-    name: 'loopback',
-    address: '127.0.0.1',
-    family: 'IPv4',
+    name: "loopback",
+    address: "127.0.0.1",
+    family: "IPv4",
     internal: true,
+    netmask: "255.0.0.0",
   });
 
   return interfaces;
@@ -56,12 +58,12 @@ export function getNetworkInterfaces(): NetworkInterface[] {
 async function promptProtocol(): Promise<Protocol> {
   const { protocol } = await inquirer.prompt<{ protocol: Protocol }>([
     {
-      type: 'list',
-      name: 'protocol',
-      message: 'Select DMX protocol to monitor:',
+      type: "list",
+      name: "protocol",
+      message: "Select DMX protocol to monitor:",
       choices: [
-        { name: 'sACN (E1.31) - Streaming ACN', value: 'sacn' },
-        { name: 'Art-Net - Artistic Licence protocol', value: 'artnet' },
+        { name: "sACN (E1.31) - Streaming ACN", value: "sacn" },
+        { name: "Art-Net - Artistic Licence protocol", value: "artnet" },
       ],
     },
   ]);
@@ -71,36 +73,34 @@ async function promptProtocol(): Promise<Protocol> {
 /**
  * Prompt for network interface selection
  */
-async function promptInterface(
-  interfaces: NetworkInterface[]
-): Promise<{ address: string; name?: string }> {
+async function promptInterface(interfaces: NetworkInterface[]): Promise<{ address: string; name?: string; netmask?: string }> {
   const choices = [
-    { name: 'All interfaces (0.0.0.0)', value: '0.0.0.0' },
-    ...interfaces.map(iface => ({
+    { name: "All interfaces (0.0.0.0)", value: "0.0.0.0" },
+    ...interfaces.map((iface) => ({
       name: `${iface.name} (${iface.address})`,
       value: iface.address,
     })),
-    { name: 'Enter custom IP address', value: 'custom' },
+    { name: "Enter custom IP address", value: "custom" },
   ];
 
   const { selection } = await inquirer.prompt<{ selection: string }>([
     {
-      type: 'list',
-      name: 'selection',
-      message: 'Select network interface to listen on:',
+      type: "list",
+      name: "selection",
+      message: "Select network interface to listen on:",
       choices,
     },
   ]);
 
-  if (selection === 'custom') {
+  if (selection === "custom") {
     const { customAddress } = await inquirer.prompt<{ customAddress: string }>([
       {
-        type: 'input',
-        name: 'customAddress',
-        message: 'Enter IP address to bind to:',
+        type: "input",
+        name: "customAddress",
+        message: "Enter IP address to bind to:",
         validate: (input: string) => {
           if (!isValidIPv4(input)) {
-            return 'Please enter a valid IPv4 address';
+            return "Please enter a valid IPv4 address";
           }
           return true;
         },
@@ -109,10 +109,11 @@ async function promptInterface(
     return { address: customAddress };
   }
 
-  const selectedInterface = interfaces.find(i => i.address === selection);
+  const selectedInterface = interfaces.find((i) => i.address === selection);
   return {
     address: selection,
     name: selectedInterface?.name,
+    netmask: selectedInterface?.netmask,
   };
 }
 
@@ -122,9 +123,9 @@ async function promptInterface(
 async function promptMulticast(): Promise<boolean> {
   const { useMulticast } = await inquirer.prompt<{ useMulticast: boolean }>([
     {
-      type: 'confirm',
-      name: 'useMulticast',
-      message: 'Listen on multicast addresses? (recommended for sACN)',
+      type: "confirm",
+      name: "useMulticast",
+      message: "Listen on multicast addresses? (recommended for sACN)",
       default: true,
     },
   ]);
@@ -137,9 +138,9 @@ async function promptMulticast(): Promise<boolean> {
 async function promptBroadcast(): Promise<boolean> {
   const { useBroadcast } = await inquirer.prompt<{ useBroadcast: boolean }>([
     {
-      type: 'confirm',
-      name: 'useBroadcast',
-      message: 'Listen for broadcast packets? (recommended for Art-Net)',
+      type: "confirm",
+      name: "useBroadcast",
+      message: "Listen for broadcast packets? (recommended for Art-Net)",
       default: true,
     },
   ]);
@@ -149,17 +150,15 @@ async function promptBroadcast(): Promise<boolean> {
 /**
  * Prompt for universe selection from discovered universes
  */
-export async function promptUniverseSelection(
-  universes: number[]
-): Promise<number> {
+export async function promptUniverseSelection(universes: number[]): Promise<number> {
   if (universes.length === 0) {
-    throw ConfigError.missingRequired('universe');
+    throw ConfigError.missingRequired("universe");
   }
 
   if (universes.length === 1) {
     const universe = universes[0];
     if (universe === undefined) {
-      throw ConfigError.missingRequired('universe');
+      throw ConfigError.missingRequired("universe");
     }
     logInfo(`Auto-selecting only detected universe: ${universe}`);
     return universe;
@@ -167,13 +166,15 @@ export async function promptUniverseSelection(
 
   const { universe } = await inquirer.prompt<{ universe: number }>([
     {
-      type: 'list',
-      name: 'universe',
+      type: "list",
+      name: "universe",
       message: `Multiple universes detected (${universes.length}). Select universe to monitor:`,
-      choices: universes.sort((a, b) => a - b).map(u => ({
-        name: `Universe ${u}`,
-        value: u,
-      })),
+      choices: universes
+        .sort((a, b) => a - b)
+        .map((u) => ({
+          name: `Universe ${u}`,
+          value: u,
+        })),
     },
   ]);
 
@@ -185,13 +186,13 @@ export async function promptUniverseSelection(
  */
 export function displayDiscoveredNodes(nodes: ArtNetNode[]): void {
   if (nodes.length === 0) {
-    console.log('\nNo Art-Net nodes discovered.');
+    console.log("\nNo Art-Net nodes discovered.");
     return;
   }
 
   console.log(`\n--- Discovered Art-Net Nodes (${nodes.length}) ---`);
   nodes.forEach((node, index) => {
-    console.log(`\n  ${index + 1}. ${node.shortName || 'Unknown'} (${node.ip})`);
+    console.log(`\n  ${index + 1}. ${node.shortName || "Unknown"} (${node.ip})`);
     if (node.manufacturer) {
       console.log(`     Manufacturer: ${node.manufacturer}`);
     }
@@ -203,48 +204,66 @@ export function displayDiscoveredNodes(nodes: ArtNetNode[]): void {
     }
     if (node.universes.length > 0) {
       // Display as 1-indexed for user clarity (Art-Net wire format is 0-indexed)
-      console.log(`     Universes: ${node.universes.map(u => u + 1).join(', ')}`);
+      console.log(`     Universes: ${node.universes.map((u) => u + 1).join(", ")}`);
     }
   });
-  console.log('\n-----------------------------------------\n');
+  console.log("\n-----------------------------------------\n");
 }
+
+/** Special return value indicating user wants to refresh the node list */
+export const REFRESH_NODE_LIST = Symbol("REFRESH_NODE_LIST");
+
+/** Result type for node selection */
+export type NodeSelectionResult = ArtNetNode | null | typeof REFRESH_NODE_LIST;
 
 /**
  * Prompt for Art-Net node selection from discovered nodes
+ * @param nodes List of discovered nodes
+ * @param hasNewNodes If true, highlights the refresh option to indicate new nodes are available
+ * @returns Selected node, null for manual entry, or REFRESH_NODE_LIST to refresh
  */
-export async function promptNodeSelection(
-  nodes: ArtNetNode[]
-): Promise<ArtNetNode | null> {
+export async function promptNodeSelection(nodes: ArtNetNode[], hasNewNodes: boolean = false): Promise<NodeSelectionResult> {
   if (nodes.length === 0) {
     return null;
   }
 
   // Build choices from discovered nodes
-  const choices = nodes.map((node, index) => {
+  const choices: Array<{ name: string; value: number }> = [];
+
+  // Add node choices first
+  nodes.forEach((node, index) => {
     // Display universes as 1-indexed for user clarity (Art-Net wire format is 0-indexed)
-    const universeStr = node.universes.length > 0 
-      ? ` [Universes: ${node.universes.map(u => u + 1).join(', ')}]`
-      : '';
-    return {
-      name: `${node.shortName || 'Unknown'} (${node.ip})${universeStr}`,
+    const universeStr = node.universes.length > 0 ? ` [Universes: ${node.universes.map((u) => u + 1).join(", ")}]` : "";
+    choices.push({
+      name: `${node.shortName || "Unknown"} (${node.ip})${universeStr}`,
       value: index,
-    };
+    });
+  });
+
+  // Add refresh option - always available, highlighted if new nodes discovered
+  choices.push({
+    name: hasNewNodes ? "🔄 Refresh list (new nodes discovered!)" : "🔄 Refresh list",
+    value: -2,
   });
 
   // Add option to skip node selection
   choices.push({
-    name: 'Skip - Enter universe manually',
+    name: "Skip - Enter universe manually",
     value: -1,
   });
 
   const { selection } = await inquirer.prompt<{ selection: number }>([
     {
-      type: 'list',
-      name: 'selection',
-      message: 'Select an Art-Net node to monitor:',
+      type: "list",
+      name: "selection",
+      message: hasNewNodes ? "Select an Art-Net node to monitor (new nodes available!):" : "Select an Art-Net node to monitor:",
       choices,
     },
   ]);
+
+  if (selection === -2) {
+    return REFRESH_NODE_LIST;
+  }
 
   if (selection === -1) {
     return null;
@@ -256,9 +275,7 @@ export async function promptNodeSelection(
 /**
  * Prompt for universe selection from a specific node
  */
-export async function promptUniverseFromNode(
-  node: ArtNetNode
-): Promise<number | null> {
+export async function promptUniverseFromNode(node: ArtNetNode): Promise<number | null> {
   if (node.universes.length === 0) {
     console.log(`Node ${node.shortName} has no universes configured.`);
     return null;
@@ -276,11 +293,11 @@ export async function promptUniverseFromNode(
 
   const { universe } = await inquirer.prompt<{ universe: number }>([
     {
-      type: 'list',
-      name: 'universe',
+      type: "list",
+      name: "universe",
       message: `Select universe from ${node.shortName}:`,
       // Display as 1-indexed for user, but value is 0-indexed wire format
-      choices: node.universes.map(u => ({
+      choices: node.universes.map((u) => ({
         name: `Universe ${u + 1}`,
         value: u,
       })),
@@ -297,14 +314,14 @@ export async function promptUniverseFromNode(
 export async function promptManualUniverse(): Promise<number> {
   const { universe } = await inquirer.prompt<{ universe: number }>([
     {
-      type: 'input',
-      name: 'universe',
-      message: 'Enter universe number to monitor (1-63999):',
-      default: '1',
+      type: "input",
+      name: "universe",
+      message: "Enter universe number to monitor (1-63999):",
+      default: "1",
       validate: (input: string) => {
         const num = parseInt(input, 10);
         if (isNaN(num) || num < 1 || num > 63999) {
-          return 'Please enter a valid universe number (1-63999)';
+          return "Please enter a valid universe number (1-63999)";
         }
         return true;
       },
@@ -323,14 +340,14 @@ export async function promptManualUniverse(): Promise<number> {
 export async function promptSACNUniverse(): Promise<number> {
   const { universe } = await inquirer.prompt<{ universe: number }>([
     {
-      type: 'input',
-      name: 'universe',
-      message: 'Enter sACN universe to monitor (1-63999):',
-      default: '1',
+      type: "input",
+      name: "universe",
+      message: "Enter sACN universe to monitor (1-63999):",
+      default: "1",
       validate: (input: string) => {
         const num = parseInt(input, 10);
         if (isNaN(num) || num < 1 || num > 63999) {
-          return 'Please enter a valid universe number (1-63999)';
+          return "Please enter a valid universe number (1-63999)";
         }
         return true;
       },
@@ -345,42 +362,24 @@ export async function promptSACNUniverse(): Promise<number> {
  * Validate CLI options
  */
 function validateCLIOptions(options: CLIOptions): void {
-  if (options.protocol && !['sacn', 'artnet'].includes(options.protocol)) {
-    throw ConfigError.invalidOption(
-      'protocol',
-      options.protocol,
-      'must be "sacn" or "artnet"'
-    );
+  if (options.protocol && !["sacn", "artnet"].includes(options.protocol)) {
+    throw ConfigError.invalidOption("protocol", options.protocol, 'must be "sacn" or "artnet"');
   }
 
   if (options.address && !isValidIPv4(options.address)) {
-    throw ConfigError.invalidOption(
-      'address',
-      options.address,
-      'must be a valid IPv4 address'
-    );
+    throw ConfigError.invalidOption("address", options.address, "must be a valid IPv4 address");
   }
 
   if (options.universe !== undefined && !isValidUniverse(options.universe)) {
-    throw ConfigError.invalidOption(
-      'universe',
-      options.universe,
-      'must be a valid universe number (0-63999)'
-    );
+    throw ConfigError.invalidOption("universe", options.universe, "must be a valid universe number (0-63999)");
   }
 }
 
 /**
  * Find interface by name or address
  */
-function findInterface(
-  interfaces: NetworkInterface[],
-  nameOrAddress: string
-): NetworkInterface | undefined {
-  return interfaces.find(
-    i => i.name.toLowerCase() === nameOrAddress.toLowerCase() ||
-         i.address === nameOrAddress
-  );
+function findInterface(interfaces: NetworkInterface[], nameOrAddress: string): NetworkInterface | undefined {
+  return interfaces.find((i) => i.name.toLowerCase() === nameOrAddress.toLowerCase() || i.address === nameOrAddress);
 }
 
 /**
@@ -393,7 +392,7 @@ export function hasAllRequiredOptions(cliOptions: CLIOptions): boolean {
   const hasProtocol = !!cliOptions.protocol;
   const hasAddress = !!(cliOptions.address || cliOptions.interface);
   const hasUniverse = cliOptions.universe !== undefined;
-  
+
   return hasProtocol && hasAddress && hasUniverse;
 }
 
@@ -404,7 +403,7 @@ export async function runSetup(cliOptions: CLIOptions): Promise<MonitorConfig> {
   // Validate CLI options first
   validateCLIOptions(cliOptions);
 
-  logDebug('Starting interactive setup', { cliOptions });
+  logDebug("Starting interactive setup", { cliOptions });
 
   const interfaces = getNetworkInterfaces();
   logDebug(`Found ${interfaces.length} network interfaces`);
@@ -421,10 +420,14 @@ export async function runSetup(cliOptions: CLIOptions): Promise<MonitorConfig> {
   // Interface selection
   let bindAddress: string;
   let interfaceName: string | undefined;
+  let netmask: string | undefined;
 
   if (cliOptions.address) {
     bindAddress = cliOptions.address;
-    logInfo(`Using address from CLI: ${bindAddress}`);
+    // Try to find the interface for this address to get the netmask
+    const matchingIface = interfaces.find((i) => i.address === cliOptions.address);
+    netmask = matchingIface?.netmask;
+    logInfo(`Using address from CLI: ${bindAddress}`, { netmask });
   } else if (cliOptions.interface) {
     const iface = findInterface(interfaces, cliOptions.interface);
     if (!iface) {
@@ -432,15 +435,17 @@ export async function runSetup(cliOptions: CLIOptions): Promise<MonitorConfig> {
     }
     bindAddress = iface.address;
     interfaceName = iface.name;
-    logInfo(`Using interface from CLI: ${interfaceName} (${bindAddress})`);
-  } else if (cliOptions.broadcast && protocol === 'artnet') {
+    netmask = iface.netmask;
+    logInfo(`Using interface from CLI: ${interfaceName} (${bindAddress})`, { netmask });
+  } else if (cliOptions.broadcast && protocol === "artnet") {
     // Art-Net with broadcast flag: auto-bind to 0.0.0.0 for discovery
-    bindAddress = '0.0.0.0';
-    logInfo('Using 0.0.0.0 for Art-Net broadcast discovery');
+    bindAddress = "0.0.0.0";
+    logInfo("Using 0.0.0.0 for Art-Net broadcast discovery");
   } else {
     const selected = await promptInterface(interfaces);
     bindAddress = selected.address;
     interfaceName = selected.name;
+    netmask = selected.netmask;
   }
 
   // Multicast/Broadcast options - default to true when running non-interactively
@@ -448,25 +453,25 @@ export async function runSetup(cliOptions: CLIOptions): Promise<MonitorConfig> {
   let useBroadcast = false;
   const isNonInteractive = hasAllRequiredOptions(cliOptions);
 
-  if (protocol === 'sacn') {
+  if (protocol === "sacn") {
     if (cliOptions.multicast !== undefined) {
       useMulticast = cliOptions.multicast;
       logInfo(`Using multicast from CLI: ${useMulticast}`);
     } else if (isNonInteractive) {
       // Default to true for non-interactive mode
       useMulticast = true;
-      logInfo('Defaulting multicast to true (non-interactive mode)');
+      logInfo("Defaulting multicast to true (non-interactive mode)");
     } else {
       useMulticast = await promptMulticast();
     }
-  } else if (protocol === 'artnet') {
+  } else if (protocol === "artnet") {
     if (cliOptions.broadcast !== undefined) {
       useBroadcast = cliOptions.broadcast;
       logInfo(`Using broadcast from CLI: ${useBroadcast}`);
     } else if (isNonInteractive) {
       // Default to true for non-interactive mode
       useBroadcast = true;
-      logInfo('Defaulting broadcast to true (non-interactive mode)');
+      logInfo("Defaulting broadcast to true (non-interactive mode)");
     } else {
       useBroadcast = await promptBroadcast();
     }
@@ -476,6 +481,7 @@ export async function runSetup(cliOptions: CLIOptions): Promise<MonitorConfig> {
     protocol,
     bindAddress,
     interfaceName,
+    netmask,
     useMulticast,
     useBroadcast,
     selectedUniverse: cliOptions.universe,
@@ -483,7 +489,7 @@ export async function runSetup(cliOptions: CLIOptions): Promise<MonitorConfig> {
     logFile: cliOptions.logFile,
   };
 
-  logDebug('Setup complete', { config });
+  logDebug("Setup complete", { config });
 
   return config;
 }

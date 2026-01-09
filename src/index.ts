@@ -8,7 +8,7 @@
 import { Command } from "commander";
 import * as path from "path";
 import { CLIOptions, Protocol, DMXPacket, ProtocolHandler } from "./types";
-import { runSetup, confirmStart, displayDiscoveredNodes, promptNodeSelection, promptUniverseFromNode, promptManualUniverse, promptSACNUniverse, hasAllRequiredOptions } from "./setup";
+import { runSetup, confirmStart, displayDiscoveredNodes, promptNodeSelection, promptUniverseFromNode, promptManualUniverse, promptSACNUniverse, hasAllRequiredOptions, REFRESH_NODE_LIST } from "./setup";
 import { createSACNHandler, SACNHandler } from "./protocols/sacn";
 import { createArtNetHandler, ArtNetHandler } from "./protocols/artnet";
 import { createUniverseManager, UniverseManager } from "./universe";
@@ -88,7 +88,7 @@ function parseArgs(): CLIOptions {
 /**
  * Create protocol handler based on configuration
  */
-function createProtocolHandler(protocol: Protocol, bindAddress: string, useMulticast: boolean, useBroadcast: boolean, interfaceName?: string, selectedUniverse?: number): ProtocolHandler {
+function createProtocolHandler(protocol: Protocol, bindAddress: string, useMulticast: boolean, useBroadcast: boolean, interfaceName?: string, selectedUniverse?: number, netmask?: string): ProtocolHandler {
   if (protocol === "sacn") {
     return createSACNHandler({
       bindAddress,
@@ -101,6 +101,7 @@ function createProtocolHandler(protocol: Protocol, bindAddress: string, useMulti
       bindAddress,
       useBroadcast,
       interfaceName,
+      netmask,
     });
   }
 }
@@ -177,7 +178,7 @@ class DMXMonitorApp {
       });
 
       // Create protocol handler
-      this.protocolHandler = createProtocolHandler(config.protocol, config.bindAddress, config.useMulticast, config.useBroadcast, config.interfaceName, config.selectedUniverse);
+      this.protocolHandler = createProtocolHandler(config.protocol, config.bindAddress, config.useMulticast, config.useBroadcast, config.interfaceName, config.selectedUniverse, config.netmask);
 
       // Start protocol handler
       console.log(`\nStarting ${config.protocol.toUpperCase()} receiver...`);
@@ -200,7 +201,7 @@ class DMXMonitorApp {
           await this.protocolHandler.stop();
 
           // Recreate handler bound to the node's IP
-          this.protocolHandler = createProtocolHandler(config.protocol, discovery.nodeIp, config.useMulticast, config.useBroadcast, config.interfaceName, selectedUniverse);
+          this.protocolHandler = createProtocolHandler(config.protocol, discovery.nodeIp, config.useMulticast, config.useBroadcast, config.interfaceName, selectedUniverse, config.netmask);
           await this.protocolHandler.start();
           bindAddress = discovery.nodeIp;
         }
@@ -276,36 +277,70 @@ class DMXMonitorApp {
     console.log("\n🔍 Discovering Art-Net nodes...");
     console.log(`   (Waiting ${ARTNET_DISCOVERY_TIMEOUT / 1000} seconds for responses)\n`);
 
-    // Run discovery
-    const nodes = await artnetHandler.startDiscovery(ARTNET_DISCOVERY_TIMEOUT);
+    // Run initial discovery
+    await artnetHandler.startDiscovery(ARTNET_DISCOVERY_TIMEOUT);
 
-    // Display discovered nodes
-    displayDiscoveredNodes(nodes);
+    // Track the number of nodes at the time the prompt was shown
+    let nodesAtPromptTime = artnetHandler.getDiscoveredNodes().length;
 
-    // If no nodes found, prompt for manual entry
-    if (nodes.length === 0) {
-      console.log("No Art-Net nodes were discovered on the network.");
-      console.log("You can still monitor a specific universe manually.\n");
-      return { universe: await promptManualUniverse(), nodeIp: null };
+    // Handler to notify user when new nodes are discovered during prompt
+    const nodeDiscoveredHandler = (node: { shortName: string; ip: string }) => {
+      // Print a visible notification - this will appear even while inquirer prompt is active
+      console.log(`\n\n  ✨ New node discovered: ${node.shortName} (${node.ip})`);
+      console.log(`     Select "🔄 Refresh list" to see updated nodes\n`);
+    };
+    artnetHandler.on("nodeDiscovered", nodeDiscoveredHandler);
+
+    try {
+      // Loop to allow refreshing the list when new nodes are discovered
+      while (true) {
+        // Get current list of nodes
+        const nodes = artnetHandler.getDiscoveredNodes();
+
+        // Check if we have more nodes than when we last showed the prompt
+        const hasNewNodes = nodes.length > nodesAtPromptTime;
+
+        // Display discovered nodes
+        displayDiscoveredNodes(nodes);
+
+        // If no nodes found, prompt for manual entry
+        if (nodes.length === 0) {
+          console.log("No Art-Net nodes were discovered on the network.");
+          console.log("You can still monitor a specific universe manually.\n");
+          return { universe: await promptManualUniverse(), nodeIp: null };
+        }
+
+        // Update the count for next iteration
+        nodesAtPromptTime = nodes.length;
+
+        // Let user select a node (always show refresh option so user can refresh if new nodes arrive)
+        const selectedNode = await promptNodeSelection(nodes, hasNewNodes);
+
+        // Check if user wants to refresh the list
+        if (selectedNode === REFRESH_NODE_LIST) {
+          console.log("\n🔄 Refreshing node list...\n");
+          continue; // Loop back to show updated list
+        }
+
+        if (!selectedNode) {
+          // User chose to skip node selection
+          return { universe: await promptManualUniverse(), nodeIp: null };
+        }
+
+        // Let user select a universe from the node
+        const universeFromNode = await promptUniverseFromNode(selectedNode);
+
+        if (universeFromNode !== null) {
+          return { universe: universeFromNode, nodeIp: selectedNode.ip };
+        }
+
+        // Node has no universes, fall back to manual entry
+        return { universe: await promptManualUniverse(), nodeIp: selectedNode.ip };
+      }
+    } finally {
+      // Clean up the event listener
+      artnetHandler.off("nodeDiscovered", nodeDiscoveredHandler);
     }
-
-    // Let user select a node
-    const selectedNode = await promptNodeSelection(nodes);
-
-    if (!selectedNode) {
-      // User chose to skip node selection
-      return { universe: await promptManualUniverse(), nodeIp: null };
-    }
-
-    // Let user select a universe from the node
-    const universeFromNode = await promptUniverseFromNode(selectedNode);
-
-    if (universeFromNode !== null) {
-      return { universe: universeFromNode, nodeIp: selectedNode.ip };
-    }
-
-    // Node has no universes, fall back to manual entry
-    return { universe: await promptManualUniverse(), nodeIp: selectedNode.ip };
   }
 
   /**

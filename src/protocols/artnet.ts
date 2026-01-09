@@ -28,6 +28,8 @@ export interface ArtNetConfig {
   bindAddress: string;
   useBroadcast: boolean;
   interfaceName?: string;
+  /** Netmask for the interface (e.g., "255.255.255.0") - used to calculate subnet broadcast */
+  netmask?: string;
 }
 
 /** Art-Net OpCodes */
@@ -36,13 +38,35 @@ const ARTNET_OPCODE_POLL = 0x2000; // OpPoll
 const ARTNET_OPCODE_POLL_REPLY = 0x2100; // OpPollReply
 
 /** Art-Net packet header */
-const ARTNET_HEADER = Buffer.from('Art-Net\0');
+const ARTNET_HEADER = Buffer.from("Art-Net\0");
 const ARTNET_HEADER_LENGTH = 8;
 const ARTNET_MIN_PACKET_LENGTH = 18; // Header + OpCode + ProtVer + Sequence + Physical + Universe + Length
 const ARTNET_POLL_REPLY_MIN_LENGTH = 207; // Minimum ArtPollReply packet length
 
 /** Default discovery timeout in milliseconds */
 const DEFAULT_DISCOVERY_TIMEOUT = 3000;
+
+/**
+ * Calculate the subnet broadcast address from an IP and netmask
+ * e.g., IP: 2.0.0.2, Netmask: 255.0.0.0 -> Broadcast: 2.255.255.255
+ */
+function calculateBroadcastAddress(ip: string, netmask: string): string {
+  const ipParts = ip.split(".").map(Number);
+  const maskParts = netmask.split(".").map(Number);
+
+  if (ipParts.length !== 4 || maskParts.length !== 4) {
+    // Invalid format, fall back to global broadcast
+    return ARTNET_BROADCAST;
+  }
+
+  // Broadcast = IP OR (NOT netmask)
+  const broadcastParts = ipParts.map((ipByte, i) => {
+    const maskByte = maskParts[i] ?? 255;
+    return (ipByte | (~maskByte & 0xff)) >>> 0;
+  });
+
+  return broadcastParts.join(".");
+}
 
 /**
  * Art-Net protocol handler
@@ -65,11 +89,11 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
    */
   async start(): Promise<void> {
     if (this.isRunning) {
-      logWarn('Art-Net handler already running');
+      logWarn("Art-Net handler already running");
       return;
     }
 
-    logInfo('Starting Art-Net receiver', {
+    logInfo("Starting Art-Net receiver", {
       bindAddress: this.config.bindAddress,
       useBroadcast: this.config.useBroadcast,
     });
@@ -77,87 +101,90 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
     return new Promise((resolve, reject) => {
       try {
         this.socket = dgram.createSocket({
-          type: 'udp4',
+          type: "udp4",
           reuseAddr: true,
         });
 
         // Handle errors
-        this.socket.on('error', (error: Error) => {
-          logError(error, 'Art-Net socket error');
+        this.socket.on("error", (error: Error) => {
+          logError(error, "Art-Net socket error");
           const categorizedError = this.categorizeError(error);
-          
+
           if (!this.isRunning) {
             // Error during startup
             reject(categorizedError);
           } else {
-            this.emit('error', categorizedError);
+            this.emit("error", categorizedError);
           }
         });
 
         // Handle incoming messages
-        this.socket.on('message', (msg: Buffer, rinfo: dgram.RemoteInfo) => {
+        this.socket.on("message", (msg: Buffer, rinfo: dgram.RemoteInfo) => {
           try {
             // Debug: log all incoming packets
             const opCode = msg.length >= 10 ? msg.readUInt16LE(8) : 0;
-            logDebug(`Raw packet received`, { 
-              from: rinfo.address, 
+            logDebug(`Raw packet received`, {
+              from: rinfo.address,
               port: rinfo.port,
               length: msg.length,
-              opCode: opCode.toString(16)
+              opCode: opCode.toString(16),
             });
             this.handleMessage(msg, rinfo);
           } catch (error) {
-            logError(error, 'Error handling Art-Net message');
-            this.emit('error', wrapError(error, 'Art-Net message handling'));
+            logError(error, "Error handling Art-Net message");
+            this.emit("error", wrapError(error, "Art-Net message handling"));
           }
         });
 
         // Handle socket close
-        this.socket.on('close', () => {
-          logDebug('Art-Net socket closed');
+        this.socket.on("close", () => {
+          logDebug("Art-Net socket closed");
           this.isRunning = false;
-          this.emit('close');
+          this.emit("close");
         });
 
         // Bind with options matching DMXDesktop for cross-platform compatibility
         // exclusive: false allows multiple apps to bind to same port (needed for same-machine testing)
-        this.socket.bind({
-          port: ARTNET_PORT,
-          address: this.config.bindAddress,
-          exclusive: false,
-        }, () => {
-          if (!this.socket) return;
+        this.socket.bind(
+          {
+            port: ARTNET_PORT,
+            address: this.config.bindAddress,
+            exclusive: false,
+          },
+          () => {
+            if (!this.socket) return;
 
-          // Enable broadcast
-          try {
-            this.socket.setBroadcast(true);
-            logDebug('Broadcast enabled on Art-Net socket');
-          } catch (error) {
-            logWarn('Failed to enable broadcast', { error });
-          }
-
-          // macOS: Increase receive buffer size for better performance
-          if (process.platform === 'darwin') {
+            // Enable broadcast
             try {
-              this.socket.setRecvBufferSize(65535);
-              logDebug('macOS: Receive buffer size set to 65535');
+              this.socket.setBroadcast(true);
+              logDebug("Broadcast enabled on Art-Net socket");
             } catch (error) {
-              logWarn('Failed to set receive buffer size', { error });
+              logWarn("Failed to enable broadcast", { error });
             }
-          }
 
-          this.isRunning = true;
-          const address = this.socket.address();
-          logInfo('Art-Net receiver started', {
-            address: address.address,
-            port: address.port,
-            platform: process.platform,
-          });
-          resolve();
-        });
+            // macOS: Increase receive buffer size for better performance
+            if (process.platform === "darwin") {
+              try {
+                this.socket.setRecvBufferSize(65535);
+                logDebug("macOS: Receive buffer size set to 65535");
+              } catch (error) {
+                logWarn("Failed to set receive buffer size", { error });
+              }
+            }
+
+            this.isRunning = true;
+            const address = this.socket.address();
+            logInfo("Art-Net receiver started", {
+              address: address.address,
+              port: address.port,
+              platform: process.platform,
+            });
+            resolve();
+          }
+        );
       } catch (error) {
         const wrappedError = this.categorizeError(error);
-        logError(wrappedError, 'Failed to start Art-Net receiver');
+        logError(wrappedError, "Failed to start Art-Net receiver");
         reject(wrappedError);
       }
     });
@@ -171,7 +198,7 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
       return;
     }
 
-    logInfo('Stopping Art-Net receiver');
+    logInfo("Stopping Art-Net receiver");
 
     return new Promise((resolve) => {
       if (!this.socket) {
@@ -183,7 +210,7 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
       this.socket.close(() => {
         this.socket = null;
         this.isRunning = false;
-        logInfo('Art-Net receiver stopped');
+        logInfo("Art-Net receiver stopped");
         resolve();
       });
     });
@@ -208,7 +235,7 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
    */
   private sendArtPoll(): void {
     if (!this.socket) {
-      logWarn('Cannot send ArtPoll: socket not initialized');
+      logWarn("Cannot send ArtPoll: socket not initialized");
       return;
     }
 
@@ -216,14 +243,14 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
     const artPollPacket = Buffer.alloc(14);
 
     // Art-Net header (8 bytes)
-    artPollPacket.write('Art-Net\0', 0);
+    artPollPacket.write("Art-Net\0", 0);
 
     // OpPoll code (0x2000, little-endian)
     artPollPacket.writeUInt16LE(ARTNET_OPCODE_POLL, 8);
 
     // Protocol version (2 bytes)
-    artPollPacket.writeUInt8(0, 10);   // Hi byte
-    artPollPacket.writeUInt8(14, 11);  // Lo byte - protocol version 14
+    artPollPacket.writeUInt8(0, 10); // Hi byte
+    artPollPacket.writeUInt8(14, 11); // Lo byte - protocol version 14
 
     // TalkToMe flags (1 byte)
     artPollPacket.writeUInt8(0x00, 12);
@@ -231,14 +258,26 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
     // Priority (1 byte)
     artPollPacket.writeUInt8(0x00, 13);
 
-    logDebug('Sending ArtPoll broadcast');
+    // Calculate broadcast address based on interface IP and netmask
+    // This ensures ArtPoll reaches devices on non-standard subnets (e.g., 2.x.x.x with 255.0.0.0 netmask)
+    let broadcastAddress = ARTNET_BROADCAST;
+    if (this.config.bindAddress !== "0.0.0.0" && this.config.netmask) {
+      broadcastAddress = calculateBroadcastAddress(this.config.bindAddress, this.config.netmask);
+      logDebug("Using subnet broadcast address", {
+        ip: this.config.bindAddress,
+        netmask: this.config.netmask,
+        broadcast: broadcastAddress,
+      });
+    }
+
+    logDebug("Sending ArtPoll broadcast", { broadcastAddress });
 
     // Send to broadcast address
-    this.socket.send(artPollPacket, ARTNET_PORT, ARTNET_BROADCAST, (error) => {
+    this.socket.send(artPollPacket, ARTNET_PORT, broadcastAddress, (error) => {
       if (error) {
-        logError(error, 'Failed to send ArtPoll');
+        logError(error, "Failed to send ArtPoll");
       } else {
-        logDebug('ArtPoll sent successfully');
+        logDebug("ArtPoll sent successfully", { broadcastAddress });
       }
     });
   }
@@ -250,18 +289,18 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
    */
   async startDiscovery(timeout: number = DEFAULT_DISCOVERY_TIMEOUT): Promise<ArtNetNode[]> {
     if (!this.isRunning) {
-      throw new Error('Art-Net handler must be started before discovery');
+      throw new Error("Art-Net handler must be started before discovery");
     }
 
     if (this.isDiscovering) {
-      logWarn('Discovery already in progress');
+      logWarn("Discovery already in progress");
       return this.getDiscoveredNodes();
     }
 
     this.isDiscovering = true;
     this.discoveredNodes.clear();
 
-    logInfo('Starting Art-Net node discovery', { timeout });
+    logInfo("Starting Art-Net node discovery", { timeout });
 
     // Send ArtPoll
     this.sendArtPoll();
@@ -282,40 +321,39 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
    */
   private parseArtPollReply(msg: Buffer, rinfo: dgram.RemoteInfo): void {
     if (msg.length < ARTNET_POLL_REPLY_MIN_LENGTH) {
-      logDebug('ArtPollReply packet too short', { length: msg.length });
+      logDebug("ArtPollReply packet too short", { length: msg.length });
       return;
     }
 
     // Get short name early for logging
-    const shortName = msg.toString('utf8', 26, 44).split('\0')[0]?.trim() || '';
+    const shortName = msg.toString("utf8", 26, 44).split("\0")[0]?.trim() || "";
 
     try {
       // Parse ESTA manufacturer code (offset 24-25, little-endian with hi byte at offset+1)
       const estaOffset = 24;
-      const estaCode = msg.readUInt8(estaOffset + 1) << 8 | msg.readUInt8(estaOffset);
-      const estaHex = `${estaCode.toString(16).padStart(4, '0').toUpperCase()}h`;
+      const estaCode = (msg.readUInt8(estaOffset + 1) << 8) | msg.readUInt8(estaOffset);
+      const estaHex = `${estaCode.toString(16).padStart(4, "0").toUpperCase()}h`;
 
       // Find manufacturer name
-      const manufacturerObj = ESTA_MANUFACTURER_CODES.find(code => Object.keys(code)[0] === estaHex);
-      const manufacturer = manufacturerObj 
-        ? Object.values(manufacturerObj)[0] 
-        : `Unknown (0x${estaCode.toString(16).padStart(4, '0')})`;
+      const manufacturerObj = ESTA_MANUFACTURER_CODES.find((code) => Object.keys(code)[0] === estaHex);
+      const manufacturer = manufacturerObj ? Object.values(manufacturerObj)[0] : `Unknown (0x${estaCode.toString(16).padStart(4, "0")})`;
 
       // Parse other fields
-      const longName = msg.toString('utf8', 44, 108).split('\0')[0]?.trim() || '';
+      const longName = msg.toString("utf8", 44, 108).split("\0")[0]?.trim() || "";
       const firmwareVersion = `V${msg[16]}.${msg[17]}`;
       const numPorts = msg[173] || 0;
 
       // Parse MAC address
       const macBuffer = msg.subarray(201, 207);
       const macAddress = Array.from(macBuffer)
-        .map(byte => byte.toString(16).padStart(2, '0'))
-        .join(':')
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join(":")
         .toUpperCase();
 
       // Get or create node entry
       let node = this.discoveredNodes.get(rinfo.address);
-      
+      const isNewNode = !node;
+
       if (!node) {
         node = {
           ip: rinfo.address,
@@ -354,11 +392,14 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
       }
       node.universes.sort((a, b) => a - b);
 
+      // Emit nodeDiscovered event for new nodes
+      if (isNewNode) {
+        this.emit("nodeDiscovered", node);
+      }
     } catch (error) {
-      logError(error, 'Error parsing ArtPollReply');
+      logError(error, "Error parsing ArtPollReply");
     }
   }
-
 
   /**
    * Handle incoming UDP message
@@ -366,13 +407,13 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
   private handleMessage(msg: Buffer, rinfo: dgram.RemoteInfo): void {
     // Validate minimum packet length
     if (msg.length < ARTNET_MIN_PACKET_LENGTH) {
-      logDebug('Packet too short', { length: msg.length, from: rinfo.address });
+      logDebug("Packet too short", { length: msg.length, from: rinfo.address });
       return;
     }
 
     // Validate Art-Net header
     if (!this.validateHeader(msg)) {
-      logDebug('Invalid Art-Net header', { from: rinfo.address });
+      logDebug("Invalid Art-Net header", { from: rinfo.address });
       return;
     }
 
@@ -389,7 +430,7 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
         this.parseArtPollReply(msg, rinfo);
         break;
       default:
-        logDebug('Unhandled Art-Net packet', { opCode: opCode.toString(16), from: rinfo.address });
+        logDebug("Unhandled Art-Net packet", { opCode: opCode.toString(16), from: rinfo.address });
     }
   }
 
@@ -407,7 +448,7 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
 
   /**
    * Parse Art-Net DMX packet (OpDmx)
-   * 
+   *
    * Packet structure:
    * Offset | Size | Description
    * -------|------|------------
@@ -424,7 +465,7 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
     // Protocol version (big-endian at offset 10)
     const protocolVersion = msg.readUInt16BE(10);
     if (protocolVersion < 14) {
-      logDebug('Unsupported Art-Net version', { version: protocolVersion });
+      logDebug("Unsupported Art-Net version", { version: protocolVersion });
       return;
     }
 
@@ -450,13 +491,13 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
 
     // Validate data length
     if (dataLength < 2 || dataLength > 512) {
-      logDebug('Invalid DMX data length', { length: dataLength });
+      logDebug("Invalid DMX data length", { length: dataLength });
       return;
     }
 
     // Validate packet has enough data
     if (msg.length < 18 + dataLength) {
-      logDebug('Packet truncated', { expected: 18 + dataLength, actual: msg.length });
+      logDebug("Packet truncated", { expected: 18 + dataLength, actual: msg.length });
       return;
     }
 
@@ -474,7 +515,7 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
       };
       this.discoveredUniverses.set(universe, info);
       logInfo(`Discovered new Art-Net universe: ${universe}`, { source: rinfo.address });
-      this.emit('universeDiscovered', universe);
+      this.emit("universeDiscovered", universe);
     } else {
       // Update existing universe info
       existingInfo.lastSeen = now;
@@ -500,7 +541,7 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
       timestamp: now,
     };
 
-    logDebug('Art-Net DMX packet received', {
+    logDebug("Art-Net DMX packet received", {
       universe,
       sequence,
       physical,
@@ -508,7 +549,7 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
       source: rinfo.address,
     });
 
-    this.emit('packet', dmxPacket);
+    this.emit("packet", dmxPacket);
   }
 
   /**
@@ -517,58 +558,44 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
   private categorizeError(error: unknown): Error {
     if (error instanceof Error) {
       const nodeError = error as NodeJS.ErrnoException;
-      
-      if (nodeError.code === 'EADDRINUSE') {
+
+      if (nodeError.code === "EADDRINUSE") {
         return NetworkError.portInUse(ARTNET_PORT, this.config.bindAddress);
       }
-      
-      if (nodeError.code === 'EADDRNOTAVAIL') {
+
+      if (nodeError.code === "EADDRNOTAVAIL") {
         return NetworkError.bindFailed(this.config.bindAddress, ARTNET_PORT, error);
       }
-      
-      if (nodeError.code === 'ENODEV') {
+
+      if (nodeError.code === "ENODEV") {
         return NetworkError.interfaceNotFound(this.config.bindAddress);
       }
 
-      if (nodeError.code === 'EACCES') {
-        return new NetworkError(
-          `Permission denied binding to port ${ARTNET_PORT}. Try running with elevated privileges.`,
-          { port: ARTNET_PORT, address: this.config.bindAddress }
-        );
+      if (nodeError.code === "EACCES") {
+        return new NetworkError(`Permission denied binding to port ${ARTNET_PORT}. Try running with elevated privileges.`, { port: ARTNET_PORT, address: this.config.bindAddress });
       }
 
       // Check for protocol-related errors
-      if (nodeError.message?.includes('packet') || 
-          nodeError.message?.includes('header') ||
-          nodeError.message?.includes('invalid')) {
-        return ProtocolError.malformedPacket('Art-Net', nodeError.message);
+      if (nodeError.message?.includes("packet") || nodeError.message?.includes("header") || nodeError.message?.includes("invalid")) {
+        return ProtocolError.malformedPacket("Art-Net", nodeError.message);
       }
     }
 
-    return wrapError(error, 'Art-Net');
+    return wrapError(error, "Art-Net");
   }
 
   /**
    * Type-safe event emitter methods
    */
-  override on<K extends keyof ProtocolEvents>(
-    event: K,
-    listener: ProtocolEvents[K]
-  ): this {
+  override on<K extends keyof ProtocolEvents>(event: K, listener: ProtocolEvents[K]): this {
     return super.on(event, listener);
   }
 
-  override off<K extends keyof ProtocolEvents>(
-    event: K,
-    listener: ProtocolEvents[K]
-  ): this {
+  override off<K extends keyof ProtocolEvents>(event: K, listener: ProtocolEvents[K]): this {
     return super.off(event, listener);
   }
 
-  override emit<K extends keyof ProtocolEvents>(
-    event: K,
-    ...args: Parameters<ProtocolEvents[K]>
-  ): boolean {
+  override emit<K extends keyof ProtocolEvents>(event: K, ...args: Parameters<ProtocolEvents[K]>): boolean {
     return super.emit(event, ...args);
   }
 }
