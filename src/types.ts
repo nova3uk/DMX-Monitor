@@ -104,6 +104,11 @@ export const SACN_MULTICAST_BASE = "239.255.";
 /** Art-Net broadcast address */
 export const ARTNET_BROADCAST = "255.255.255.255";
 
+/** Art-Net universe limits (0-indexed on wire: 0-32767 = 32,768 universes total) */
+export const ARTNET_MAX_UNIVERSE = 32767;
+/** sACN universe limits (1-indexed: 1-63999 = 63,999 universes total) */
+export const SACN_MAX_UNIVERSE = 63999;
+
 /** sACN source information for priority tracking */
 export interface SACNSourceInfo {
   /** Source name from sACN packet */
@@ -174,10 +179,29 @@ export function isValidChannelValue(value: unknown): value is ChannelValue {
   return typeof value === "number" && value >= 0 && value <= 255 && Number.isInteger(value);
 }
 
-/** Validate universe number is in valid range */
+/** Validate universe number is in valid range (generic - allows both protocols) */
 export function isValidUniverse(universe: unknown): universe is UniverseNumber {
   // sACN supports 1-63999, Art-Net supports 0-32767
-  return typeof universe === "number" && universe >= 0 && universe <= 63999 && Number.isInteger(universe);
+  // This function is permissive to allow both protocols
+  return typeof universe === "number" && universe >= 0 && universe <= SACN_MAX_UNIVERSE && Number.isInteger(universe);
+}
+
+/** Validate Art-Net universe number (0-indexed wire format: 0-32767) */
+export function isValidArtNetUniverse(universe: unknown): universe is UniverseNumber {
+  return typeof universe === "number" && universe >= 0 && universe <= ARTNET_MAX_UNIVERSE && Number.isInteger(universe);
+}
+
+/** Validate sACN universe number (1-indexed: 1-63999) */
+export function isValidSACNUniverse(universe: unknown): universe is UniverseNumber {
+  return typeof universe === "number" && universe >= 1 && universe <= SACN_MAX_UNIVERSE && Number.isInteger(universe);
+}
+
+/**
+ * Convert universe number to display format (1-indexed for user display)
+ * Art-Net uses 0-indexed internally, sACN uses 1-indexed
+ */
+export function formatUniverseForDisplay(universe: number, protocol: Protocol): number {
+  return protocol === "artnet" ? universe + 1 : universe;
 }
 
 /** Validate IP address format */

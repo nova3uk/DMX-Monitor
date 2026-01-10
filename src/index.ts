@@ -7,7 +7,7 @@
 
 import { Command } from "commander";
 import * as path from "path";
-import { CLIOptions, Protocol, DMXPacket, ProtocolHandler, SACNSourceInfo } from "./types";
+import { CLIOptions, Protocol, DMXPacket, ProtocolHandler, SACNSourceInfo, isValidIPv4, formatUniverseForDisplay } from "./types";
 import { runSetup, confirmStart, displayDiscoveredNodes, promptNodeSelection, promptUniverseFromNode, promptManualUniverse, promptSACNUniverse, hasAllRequiredOptions, REFRESH_NODE_LIST } from "./setup";
 import { createSACNHandler, SACNHandler } from "./protocols/sacn";
 import { createArtNetHandler, ArtNetHandler } from "./protocols/artnet";
@@ -191,19 +191,43 @@ class DMXMonitorApp {
       if (this.universeManager.hasSelectedUniverse()) {
         selectedUniverse = this.universeManager.getSelectedUniverse()!;
       } else if (config.protocol === "artnet") {
-        // Run Art-Net discovery
-        const discovery = await this.runArtNetDiscovery();
-        selectedUniverse = discovery.universe;
+        // Run Art-Net discovery with error handling
+        try {
+          const discovery = await this.runArtNetDiscovery();
+          selectedUniverse = discovery.universe;
 
-        // If user selected a node, rebind to that node's IP to receive its packets
-        if (discovery.nodeIp && discovery.nodeIp !== config.bindAddress) {
-          logInfo(`Rebinding to node IP: ${discovery.nodeIp}`);
-          await this.protocolHandler.stop();
+          // If user selected a node, rebind to that node's IP to receive its packets
+          if (discovery.nodeIp && discovery.nodeIp !== config.bindAddress) {
+            // Validate the node IP before attempting to rebind
+            if (!isValidIPv4(discovery.nodeIp)) {
+              logWarn(`Invalid node IP address: ${discovery.nodeIp}, using original bind address`);
+            } else {
+              try {
+                logInfo(`Rebinding to node IP: ${discovery.nodeIp}`);
+                await this.protocolHandler.stop();
 
-          // Recreate handler bound to the node's IP
-          this.protocolHandler = createProtocolHandler(config.protocol, discovery.nodeIp, config.useMulticast, config.useBroadcast, config.interfaceName, selectedUniverse, config.netmask);
-          await this.protocolHandler.start();
-          bindAddress = discovery.nodeIp;
+                // Recreate handler bound to the node's IP
+                this.protocolHandler = createProtocolHandler(config.protocol, discovery.nodeIp, config.useMulticast, config.useBroadcast, config.interfaceName, selectedUniverse, config.netmask);
+                await this.protocolHandler.start();
+                bindAddress = discovery.nodeIp;
+              } catch (rebindError) {
+                // If rebinding fails, log the error and continue with original bind address
+                logError(rebindError, `Failed to rebind to node IP ${discovery.nodeIp}, using original bind address`);
+                console.log(`\n⚠️  Could not bind to node IP ${discovery.nodeIp}. Using original interface.`);
+
+                // Restart the original handler if it was stopped
+                if (!this.protocolHandler || !(this.protocolHandler as ArtNetHandler).getDiscoveredNodes) {
+                  this.protocolHandler = createProtocolHandler(config.protocol, config.bindAddress, config.useMulticast, config.useBroadcast, config.interfaceName, selectedUniverse, config.netmask);
+                  await this.protocolHandler.start();
+                }
+              }
+            }
+          }
+        } catch (discoveryError) {
+          // If discovery fails completely, log the error and prompt for manual universe entry
+          logError(discoveryError, "Art-Net discovery failed");
+          console.log("\n⚠️  Art-Net discovery encountered an error. Please enter universe manually.\n");
+          selectedUniverse = await promptManualUniverse();
         }
       } else {
         // For sACN, prompt for universe (auto-detect is unreliable with multicast)
@@ -327,15 +351,27 @@ class DMXMonitorApp {
           return { universe: await promptManualUniverse(), nodeIp: null };
         }
 
-        // Let user select a universe from the node
-        const universeFromNode = await promptUniverseFromNode(selectedNode);
+        // Let user select a universe from the node with error handling
+        try {
+          const universeFromNode = await promptUniverseFromNode(selectedNode);
 
-        if (universeFromNode !== null) {
-          return { universe: universeFromNode, nodeIp: selectedNode.ip };
+          if (universeFromNode !== null) {
+            // Validate the universe value before returning
+            if (typeof universeFromNode !== "number" || universeFromNode < 0 || universeFromNode > 32767) {
+              logWarn(`Invalid universe value from node: ${universeFromNode}`);
+              console.log("\n⚠️  Invalid universe value. Please enter manually.\n");
+              return { universe: await promptManualUniverse(), nodeIp: selectedNode.ip };
+            }
+            return { universe: universeFromNode, nodeIp: selectedNode.ip };
+          }
+
+          // Node has no universes, fall back to manual entry
+          return { universe: await promptManualUniverse(), nodeIp: selectedNode.ip };
+        } catch (universeError) {
+          logError(universeError, "Error selecting universe from node");
+          console.log("\n⚠️  Error selecting universe. Please enter manually.\n");
+          return { universe: await promptManualUniverse(), nodeIp: selectedNode.ip };
         }
-
-        // Node has no universes, fall back to manual entry
-        return { universe: await promptManualUniverse(), nodeIp: selectedNode.ip };
       }
     } finally {
       // Clean up the event listener
@@ -351,7 +387,9 @@ class DMXMonitorApp {
       return;
     }
 
-    logInfo(`Listening for packets on universe ${selectedUniverse}`);
+    // Log with 1-indexed universe for user clarity (Art-Net uses 0-indexed internally)
+    const displayUniverse = formatUniverseForDisplay(selectedUniverse, this.currentProtocol);
+    logInfo(`Listening for packets on universe ${displayUniverse}`);
 
     this.protocolHandler.on("packet", (packet: DMXPacket) => {
       // Check if packet is for selected universe

@@ -4,17 +4,9 @@
 
 import inquirer from 'inquirer';
 import os from 'os';
-import { 
-  Protocol, 
-  NetworkInterface, 
-  CLIOptions, 
-  MonitorConfig,
-  ArtNetNode,
-  isValidIPv4,
-  isValidUniverse,
-} from './types';
-import { ConfigError, NetworkError } from './errors';
-import { logDebug, logInfo } from './logger';
+import { Protocol, NetworkInterface, CLIOptions, MonitorConfig, ArtNetNode, isValidIPv4, isValidUniverse, formatUniverseForDisplay } from "./types";
+import { ConfigError, NetworkError } from "./errors";
+import { logDebug, logInfo } from "./logger";
 
 /**
  * Get list of available network interfaces with IPv4 addresses
@@ -191,6 +183,7 @@ export function displayDiscoveredNodes(nodes: ArtNetNode[]): void {
   }
 
   console.log(`\n--- Discovered Art-Net Nodes (${nodes.length}) ---`);
+  console.log(`    (Note: Universes shown as 1-based, Art-Net wire format is 0-based)`);
   nodes.forEach((node, index) => {
     console.log(`\n  ${index + 1}. ${node.shortName || "Unknown"} (${node.ip})`);
     if (node.manufacturer) {
@@ -309,19 +302,23 @@ export async function promptUniverseFromNode(node: ArtNetNode): Promise<number |
 
 /**
  * Prompt for manual universe entry (Art-Net)
- * User enters 1-indexed universe (1, 2, 3...), returns 0-indexed for Art-Net wire format
+ * User enters 1-indexed universe (1-32768), returns 0-indexed for Art-Net wire format
+ * Art-Net supports 32,768 universes (0-32767 on wire)
  */
 export async function promptManualUniverse(): Promise<number> {
+  // Show note about universe numbering
+  console.log("    (Note: Enter 1-based universe. Art-Net wire format is 0-based, e.g. Universe 1 = 0 on wire)");
+
   const { universe } = await inquirer.prompt<{ universe: number }>([
     {
       type: "input",
       name: "universe",
-      message: "Enter universe number to monitor (1-63999):",
+      message: "Enter Art-Net universe number to monitor (1-32768):",
       default: "1",
       validate: (input: string) => {
         const num = parseInt(input, 10);
-        if (isNaN(num) || num < 1 || num > 63999) {
-          return "Please enter a valid universe number (1-63999)";
+        if (isNaN(num) || num < 1 || num > 32768) {
+          return "Please enter a valid Art-Net universe number (1-32768)";
         }
         return true;
       },
@@ -338,6 +335,9 @@ export async function promptManualUniverse(): Promise<number> {
  * sACN uses 1-indexed universes (1-63999)
  */
 export async function promptSACNUniverse(): Promise<number> {
+  // Show note about universe numbering (sACN is natively 1-based)
+  console.log("    (Note: sACN universes are 1-based, matching the wire format)");
+
   const { universe } = await inquirer.prompt<{ universe: number }>([
     {
       type: "input",
@@ -371,7 +371,7 @@ function validateCLIOptions(options: CLIOptions): void {
   }
 
   if (options.universe !== undefined && !isValidUniverse(options.universe)) {
-    throw ConfigError.invalidOption("universe", options.universe, "must be a valid universe number (0-63999)");
+    throw ConfigError.invalidOption("universe", options.universe, "must be a valid universe number (Art-Net: 0-32767, sACN: 1-63999)");
   }
 }
 
@@ -498,28 +498,35 @@ export async function runSetup(cliOptions: CLIOptions): Promise<MonitorConfig> {
  * Confirm before starting monitoring
  */
 export async function confirmStart(config: MonitorConfig): Promise<boolean> {
-  console.log('\n--- Configuration Summary ---');
+  console.log("\n--- Configuration Summary ---");
   console.log(`Protocol:  ${config.protocol.toUpperCase()}`);
-  console.log(`Interface: ${config.interfaceName ?? 'All'} (${config.bindAddress})`);
-  
-  if (config.protocol === 'sacn') {
-    console.log(`Multicast: ${config.useMulticast ? 'Yes' : 'No'}`);
+  console.log(`Interface: ${config.interfaceName ?? "All"} (${config.bindAddress})`);
+
+  if (config.protocol === "sacn") {
+    console.log(`Multicast: ${config.useMulticast ? "Yes" : "No"}`);
   } else {
-    console.log(`Broadcast: ${config.useBroadcast ? 'Yes' : 'No'}`);
+    console.log(`Broadcast: ${config.useBroadcast ? "Yes" : "No"}`);
   }
-  
+
   if (config.selectedUniverse !== undefined) {
-    console.log(`Universe:  ${config.selectedUniverse}`);
+    // Display universe in 1-based format
+    const displayUniverse = formatUniverseForDisplay(config.selectedUniverse, config.protocol);
+    console.log(`Universe:  ${displayUniverse}`);
   } else {
     console.log(`Universe:  Auto-detect`);
   }
-  console.log('-----------------------------\n');
+
+  // Show note about universe numbering for Art-Net
+  if (config.protocol === "artnet") {
+    console.log(`           (1-based display, wire format is 0-based)`);
+  }
+  console.log("-----------------------------\n");
 
   const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
     {
-      type: 'confirm',
-      name: 'confirm',
-      message: 'Start monitoring?',
+      type: "confirm",
+      name: "confirm",
+      message: "Start monitoring?",
       default: true,
     },
   ]);

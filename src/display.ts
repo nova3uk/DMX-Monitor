@@ -6,7 +6,7 @@
  */
 
 import blessed from "blessed";
-import { GRID_COLUMNS, GRID_ROWS, TOTAL_CHANNELS, MonitorStats, RecordingState, PlaybackState, SACNSourceInfo } from "./types";
+import { GRID_COLUMNS, GRID_ROWS, TOTAL_CHANNELS, MonitorStats, RecordingState, PlaybackState, SACNSourceInfo, Protocol, formatUniverseForDisplay } from "./types";
 import { DisplayError } from "./errors";
 import { logDebug, logError, logInfo, disableConsoleLogging } from "./logger";
 
@@ -549,8 +549,10 @@ export class DisplayManager {
 
     if (this.layoutMode === "hidden") {
       // Include basic stats in footer when stats panel is hidden
+      // Convert universe to 1-indexed display format for Art-Net
+      const displayUniverse = formatUniverseForDisplay(this.stats.universe, this.stats.protocol);
       const pps = this.stats.packetsPerSecond.toFixed(0);
-      return ` {bold}Q{/bold}: Quit | ${recText} | {bold}C{/bold}: Clear | {bold}V{/bold}: Toggle (${modeText}) | Pkts: ${this.stats.packetsReceived} | ${pps}/s | U:${this.stats.universe} `;
+      return ` {bold}Q{/bold}: Quit | ${recText} | {bold}C{/bold}: Clear | {bold}V{/bold}: Toggle (${modeText}) | Pkts: ${this.stats.packetsReceived} | ${pps}/s | U:${displayUniverse} `;
     }
 
     return ` {bold}Q{/bold}: Quit | ${recText} | {bold}C{/bold}: Clear | {bold}V{/bold}: Toggle (${modeText}) `;
@@ -1107,11 +1109,14 @@ export class DisplayManager {
       }
     }
 
+    // Convert universe to 1-indexed display format for Art-Net
+    const displayUniverse = formatUniverseForDisplay(this.stats.universe, this.stats.protocol);
+    
     this.statsBox.setContent(
       [
         "",
         ` Protocol: ${this.stats.protocol.toUpperCase()}`,
-        ` Universe: ${this.stats.universe}`,
+        ` Universe: ${displayUniverse}`,
         "",
         ` Interface:`,
         `  ${this.stats.interfaceName ?? "All"}`,
@@ -1183,6 +1188,9 @@ export class DisplayManager {
     const loopText = info.loopEnabled ? "{green-fg}ON{/green-fg}" : "OFF";
     const speedText = info.speed === 1.0 ? "1.0x" : `${info.speed.toFixed(2)}x`;
 
+    // Convert universe to 1-indexed display format for Art-Net
+    const displayUniverse = formatUniverseForDisplay(info.universe, info.protocol as Protocol);
+    
     this.statsBox.setContent(
       [
         "",
@@ -1194,7 +1202,7 @@ export class DisplayManager {
         ` ${posStr} / ${durStr}`,
         "",
         ` Protocol: ${info.protocol.toUpperCase()}`,
-        ` Universe: ${info.universe}`,
+        ` Universe: ${displayUniverse}`,
         "",
         ` Speed: ${speedText}`,
         ` Loop: ${loopText}`,
@@ -1219,10 +1227,14 @@ export class DisplayManager {
           let stateIcon = "⏹";
           if (info.state === "playing") stateIcon = "▶";
           else if (info.state === "paused") stateIcon = "⏸";
-          this.headerBox.setContent(` ${this.config.title} - PLAYBACK ${stateIcon} - Universe ${info.universe} (${info.protocol.toUpperCase()}) `);
+          // Convert universe to 1-indexed display format for Art-Net
+          const displayUniverse = formatUniverseForDisplay(info.universe, info.protocol as Protocol);
+          this.headerBox.setContent(` ${this.config.title} - PLAYBACK ${stateIcon} - Universe ${displayUniverse} (${info.protocol.toUpperCase()}) `);
         } else {
           const recIndicator = this._recordingState === "recording" ? " {red-fg}● REC{/red-fg}" : "";
-          this.headerBox.setContent(` ${this.config.title} - Universe ${this.stats.universe} (${this.stats.protocol.toUpperCase()})${recIndicator} `);
+          // Convert universe to 1-indexed display format for Art-Net
+          const displayUniverse = formatUniverseForDisplay(this.stats.universe, this.stats.protocol);
+          this.headerBox.setContent(` ${this.config.title} - Universe ${displayUniverse} (${this.stats.protocol.toUpperCase()})${recIndicator} `);
         }
       }
 

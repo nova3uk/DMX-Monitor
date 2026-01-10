@@ -145,6 +145,9 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
 
         // Bind with options matching DMXDesktop for cross-platform compatibility
         // exclusive: false allows multiple apps to bind to same port (needed for same-machine testing)
+        // Note: This may hide port conflicts on some platforms - we log a warning about this
+        logDebug("Binding Art-Net socket with exclusive: false (allows port sharing)");
+        
         this.socket.bind(
           {
             port: ARTNET_PORT,
@@ -179,6 +182,10 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
               port: address.port,
               platform: process.platform,
             });
+            
+            // Log a note about port sharing - another app may be using the port
+            logDebug("Note: Port sharing is enabled. If another application is using port 6454, packets may not be received correctly.");
+            
             resolve();
           }
         );
@@ -381,16 +388,27 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
         node.macAddress = macAddress;
       }
 
-      // Extract universes from SwOut array (up to 4 ports)
+      // Extract universes from SwOut array (always read all 4 ports)
       // SwOut values are 0-indexed - keep as-is to match wire format
-      for (let i = 0; i < Math.min(numPorts, 4); i++) {
+      // Note: numPorts may not reflect actual configured universes, so we read all 4 SwOut values
+      // and filter out invalid/unused ones (0xFF typically indicates unused port)
+      for (let i = 0; i < 4; i++) {
         const swOutValue = msg[190 + i];
-        if (swOutValue !== undefined && !node.universes.includes(swOutValue)) {
+        // Valid Art-Net universe values are 0-255 for the low byte (SubUni)
+        // 0xFF (255) typically indicates an unused/unconfigured port
+        // We also check that the value is defined and not already in the list
+        if (swOutValue !== undefined && swOutValue !== 0xff && !node.universes.includes(swOutValue)) {
           node.universes.push(swOutValue);
           logDebug(`Added universe ${swOutValue} to node ${rinfo.address}`);
         }
       }
       node.universes.sort((a, b) => a - b);
+      
+      logDebug(`Node ${shortName} universes parsed`, { 
+        numPorts, 
+        universes: node.universes,
+        swOut: [msg[190], msg[191], msg[192], msg[193]]
+      });
 
       // Emit nodeDiscovered event for new nodes
       if (isNewNode) {
@@ -554,13 +572,20 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
 
   /**
    * Categorize error into appropriate error type
+   * Provides user-friendly error messages for common network issues
    */
   private categorizeError(error: unknown): Error {
     if (error instanceof Error) {
       const nodeError = error as NodeJS.ErrnoException;
 
       if (nodeError.code === "EADDRINUSE") {
-        return NetworkError.portInUse(ARTNET_PORT, this.config.bindAddress);
+        // Port is already in use - provide helpful message
+        logError(error, `Port ${ARTNET_PORT} is already in use`);
+        return new NetworkError(
+          `Port ${ARTNET_PORT} is already in use by another application. ` +
+          `Please close the other application using this port or select a different network interface.`,
+          { port: ARTNET_PORT, address: this.config.bindAddress, syscall: "bind" }
+        );
       }
 
       if (nodeError.code === "EADDRNOTAVAIL") {
@@ -572,7 +597,20 @@ export class ArtNetHandler extends EventEmitter implements ProtocolHandler {
       }
 
       if (nodeError.code === "EACCES") {
-        return new NetworkError(`Permission denied binding to port ${ARTNET_PORT}. Try running with elevated privileges.`, { port: ARTNET_PORT, address: this.config.bindAddress });
+        return new NetworkError(
+          `Permission denied binding to port ${ARTNET_PORT}. ` +
+          `Try running with elevated privileges or select a different network interface.`,
+          { port: ARTNET_PORT, address: this.config.bindAddress }
+        );
+      }
+
+      // Windows-specific: WSAEACCES (10013) - another process has exclusive access
+      if (nodeError.code === "WSAEACCES" || (nodeError.message && nodeError.message.includes("10013"))) {
+        return new NetworkError(
+          `Port ${ARTNET_PORT} is blocked or in use by another application with exclusive access. ` +
+          `Please close the other application or try a different network interface.`,
+          { port: ARTNET_PORT, address: this.config.bindAddress }
+        );
       }
 
       // Check for protocol-related errors
