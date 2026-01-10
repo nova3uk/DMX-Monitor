@@ -104,12 +104,28 @@ export const SACN_MULTICAST_BASE = "239.255.";
 /** Art-Net broadcast address */
 export const ARTNET_BROADCAST = "255.255.255.255";
 
+/** sACN source information for priority tracking */
+export interface SACNSourceInfo {
+  /** Source name from sACN packet */
+  sourceName: string;
+  /** Source IP address */
+  sourceAddress?: string;
+  /** Priority (0-200) */
+  priority: number;
+  /** Last time we received a packet from this source */
+  lastSeen: Date;
+  /** Whether this is the active (highest priority) source */
+  isActive: boolean;
+}
+
 /** Event types for protocol handlers */
 export interface ProtocolEvents {
   packet: (packet: DMXPacket) => void;
   error: (error: Error) => void;
   universeDiscovered: (universe: number) => void;
   nodeDiscovered: (node: ArtNetNode) => void;
+  /** Emitted when multiple sACN sources are detected on the same universe */
+  sourcesChanged: (sources: SACNSourceInfo[]) => void;
   close: () => void;
 }
 

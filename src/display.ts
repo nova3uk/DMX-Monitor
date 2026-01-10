@@ -6,7 +6,7 @@
  */
 
 import blessed from "blessed";
-import { GRID_COLUMNS, GRID_ROWS, TOTAL_CHANNELS, MonitorStats, RecordingState, PlaybackState } from "./types";
+import { GRID_COLUMNS, GRID_ROWS, TOTAL_CHANNELS, MonitorStats, RecordingState, PlaybackState, SACNSourceInfo } from "./types";
 import { DisplayError } from "./errors";
 import { logDebug, logError, logInfo, disableConsoleLogging } from "./logger";
 
@@ -143,6 +143,9 @@ export class DisplayManager {
   private onSpeedDownCallback: (() => void) | null = null;
   private onLoopToggleCallback: (() => void) | null = null;
 
+  // sACN competing sources warning
+  private competingSources: SACNSourceInfo[] = [];
+
   constructor(config: DisplayConfig = {}) {
     this.config = {
       title: config.title ?? "DMX Monitor",
@@ -224,7 +227,7 @@ export class DisplayManager {
 
       // Patch terminal object to prevent crashes during cleanup in pkg executables
       // blessed tries to access terminal.isAlt during cleanup, but it may be undefined
-      if (this.screen.terminal && typeof this.screen.terminal === 'object') {
+      if (this.screen.terminal && typeof this.screen.terminal === "object") {
         const termObj = this.screen.terminal as any;
         if (termObj.isAlt === undefined) {
           termObj.isAlt = false;
@@ -262,7 +265,7 @@ export class DisplayManager {
     } catch (error) {
       // Log the actual error for debugging
       logError(error, "Display initialization failed");
-      
+
       // Clean up if screen was partially created
       if (this.screen) {
         try {
@@ -929,7 +932,7 @@ export class DisplayManager {
     if (this.screen) {
       try {
         // Patch terminal object one more time before destroy to prevent crashes
-        if (this.screen.terminal && typeof this.screen.terminal === 'object') {
+        if (this.screen.terminal && typeof this.screen.terminal === "object") {
           const term = this.screen.terminal as any;
           if (term.isAlt === undefined) {
             term.isAlt = false;
@@ -944,15 +947,15 @@ export class DisplayManager {
 
         // Remove all listeners to prevent errors during cleanup
         this.screen.removeAllListeners();
-        
+
         // Try to remove process exit handlers that blessed sets up
         // This prevents blessed from trying to clean up after we've already cleaned up
-        const exitListeners = process.listeners('exit');
+        const exitListeners = process.listeners("exit");
         for (const listener of exitListeners) {
           // Remove listeners that might be from blessed
-          if (listener.toString().includes('leave') || listener.toString().includes('destroy')) {
+          if (listener.toString().includes("leave") || listener.toString().includes("destroy")) {
             try {
-              process.removeListener('exit', listener);
+              process.removeListener("exit", listener);
             } catch (e) {
               // Ignore errors removing listeners
             }
@@ -1038,6 +1041,14 @@ export class DisplayManager {
   }
 
   /**
+   * Update competing sources info (for sACN priority warning)
+   */
+  updateCompetingSources(sources: SACNSourceInfo[]): void {
+    this.competingSources = sources;
+    this.needsRender = true;
+  }
+
+  /**
    * Update stats box content
    */
   private updateStatsContent(): void {
@@ -1067,6 +1078,35 @@ export class DisplayManager {
       recordingInfo = `\n {red-fg}● REC{/red-fg} ${recMin.toString().padStart(2, "0")}:${recSec.toString().padStart(2, "0")}\n Frames: ${this.recordingFrameCount}`;
     }
 
+    // Source info (sACN only)
+    let sourceInfo = "";
+    if (this.stats.protocol === "sacn" && this.competingSources.length > 0) {
+      const activeSource = this.competingSources.find((s) => s.isActive);
+      const inactiveSources = this.competingSources.filter((s) => !s.isActive);
+
+      if (this.competingSources.length > 1) {
+        // Multiple sources - show warning
+        sourceInfo = `\n {yellow-fg}⚠ Multi-source{/yellow-fg}`;
+        if (activeSource) {
+          sourceInfo += `\n {green-fg}►{/green-fg} ${this.truncateSource(activeSource.sourceName)}`;
+          sourceInfo += `\n   pri:${activeSource.priority}`;
+        }
+        for (const src of inactiveSources.slice(0, 2)) {
+          // Show max 2 inactive
+          sourceInfo += `\n {red-fg}✗{/red-fg} ${this.truncateSource(src.sourceName)}`;
+          sourceInfo += `\n   pri:${src.priority}`;
+        }
+        if (inactiveSources.length > 2) {
+          sourceInfo += `\n   +${inactiveSources.length - 2} more`;
+        }
+      } else if (activeSource) {
+        // Single source - just show source name and priority
+        sourceInfo = `\n Source:`;
+        sourceInfo += `\n  ${this.truncateSource(activeSource.sourceName)}`;
+        sourceInfo += `\n  pri:${activeSource.priority}`;
+      }
+    }
+
     this.statsBox.setContent(
       [
         "",
@@ -1086,8 +1126,17 @@ export class DisplayManager {
         "",
         ` Display: ${modeText}`,
         recordingInfo,
+        sourceInfo,
       ].join("\n")
     );
+  }
+
+  /**
+   * Truncate source name to fit in stats panel
+   */
+  private truncateSource(name: string, maxLen: number = 18): string {
+    if (name.length <= maxLen) return name;
+    return name.substring(0, maxLen - 1) + "…";
   }
 
   /**

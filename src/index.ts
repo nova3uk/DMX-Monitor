@@ -7,7 +7,7 @@
 
 import { Command } from "commander";
 import * as path from "path";
-import { CLIOptions, Protocol, DMXPacket, ProtocolHandler } from "./types";
+import { CLIOptions, Protocol, DMXPacket, ProtocolHandler, SACNSourceInfo } from "./types";
 import { runSetup, confirmStart, displayDiscoveredNodes, promptNodeSelection, promptUniverseFromNode, promptManualUniverse, promptSACNUniverse, hasAllRequiredOptions, REFRESH_NODE_LIST } from "./setup";
 import { createSACNHandler, SACNHandler } from "./protocols/sacn";
 import { createArtNetHandler, ArtNetHandler } from "./protocols/artnet";
@@ -15,7 +15,7 @@ import { createUniverseManager, UniverseManager } from "./universe";
 import { createDisplayManager, DisplayManager } from "./display";
 import { createRecorder, DMXRecorder, createPlayer, DMXPlayer } from "./recorder";
 import { createTransmitter, DMXTransmitter } from "./transmitter";
-import { initLogger, logInfo, logError, logDebug, closeLogger, formatErrorForUser, enableConsoleLogging } from "./logger";
+import { initLogger, logInfo, logError, logDebug, logWarn, closeLogger, formatErrorForUser, enableConsoleLogging } from "./logger";
 import { isDMXMonitorError, wrapError } from "./errors";
 
 /** Application version */
@@ -388,6 +388,21 @@ class DMXMonitorApp {
     this.protocolHandler.on("universeDiscovered", (universe: number) => {
       logInfo(`New universe discovered: ${universe}`);
     });
+
+    // Handle sACN competing sources warning
+    if (this.protocolHandler instanceof SACNHandler) {
+      (this.protocolHandler as SACNHandler).on("sourcesChanged", (sources: SACNSourceInfo[]) => {
+        this.displayManager?.updateCompetingSources(sources);
+        if (sources.length > 1) {
+          const activeSource = sources.find((s) => s.isActive);
+          const inactiveSources = sources.filter((s) => !s.isActive);
+          logWarn(`Multiple sACN sources on universe ${selectedUniverse}:`, {
+            active: activeSource ? `${activeSource.sourceName} (pri:${activeSource.priority})` : "none",
+            inactive: inactiveSources.map((s) => `${s.sourceName} (pri:${s.priority})`).join(", "),
+          });
+        }
+      });
+    }
   }
 
   /**

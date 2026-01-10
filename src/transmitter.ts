@@ -5,13 +5,9 @@
  */
 
 import dgram from "dgram";
+import crypto from "crypto";
 import { Sender } from "sacn";
-import {
-  Protocol,
-  TOTAL_CHANNELS,
-  ARTNET_PORT,
-  ARTNET_BROADCAST,
-} from "./types";
+import { Protocol, TOTAL_CHANNELS, ARTNET_PORT, ARTNET_BROADCAST } from "./types";
 import { logInfo, logError, logDebug } from "./logger";
 
 /** Art-Net packet header */
@@ -54,7 +50,7 @@ export interface SACNTransmitterConfig {
 
 /**
  * Art-Net DMX Transmitter
- * 
+ *
  * Sends Art-Net DMX packets (OpDmx) to a target address.
  */
 export class ArtNetTransmitter implements DMXTransmitter {
@@ -149,7 +145,7 @@ export class ArtNetTransmitter implements DMXTransmitter {
 
   /**
    * Send DMX data via Art-Net
-   * 
+   *
    * Packet structure:
    * Offset | Size | Description
    * -------|------|------------
@@ -198,28 +194,25 @@ export class ArtNetTransmitter implements DMXTransmitter {
     }
 
     // Send packet
-    this.socket.send(
-      packet,
-      ARTNET_PORT,
-      this.config.targetAddress!,
-      (error) => {
-        if (error) {
-          logError(error, "Failed to send Art-Net packet");
-        }
+    this.socket.send(packet, ARTNET_PORT, this.config.targetAddress!, (error) => {
+      if (error) {
+        logError(error, "Failed to send Art-Net packet");
       }
-    );
+    });
   }
 }
 
 /**
  * sACN (E1.31) DMX Transmitter
- * 
+ *
  * Sends sACN packets to multicast address for the universe.
  */
 export class SACNTransmitter implements DMXTransmitter {
   private sender: Sender | null = null;
   private readonly config: SACNTransmitterConfig;
   private isRunning = false;
+  /** Unique CID (Component Identifier) for this transmitter instance */
+  private readonly cid: Buffer;
 
   constructor(config: SACNTransmitterConfig) {
     this.config = {
@@ -228,6 +221,9 @@ export class SACNTransmitter implements DMXTransmitter {
       priority: config.priority ?? 100,
       interfaceAddress: config.interfaceAddress,
     };
+    // Generate a unique CID (UUID) for this transmitter instance
+    // This ensures multiple playback instances are identified as separate sources
+    this.cid = crypto.randomBytes(16);
   }
 
   getProtocol(): Protocol {
@@ -243,6 +239,7 @@ export class SACNTransmitter implements DMXTransmitter {
       universe: this.config.universe,
       sourceName: this.config.sourceName,
       priority: this.config.priority,
+      cid: this.cid.toString("hex").substring(0, 8) + "...",
     });
 
     try {
@@ -267,6 +264,11 @@ export class SACNTransmitter implements DMXTransmitter {
         universe: this.config.universe,
         iface: ifaceAddress,
         reuseAddr: true,
+        defaultPacketOptions: {
+          cid: this.cid,
+          sourceName: this.config.sourceName,
+          priority: this.config.priority,
+        },
       });
 
       this.isRunning = true;
@@ -299,7 +301,7 @@ export class SACNTransmitter implements DMXTransmitter {
 
   /**
    * Send DMX data via sACN
-   * 
+   *
    * The sacn library expects channel values as percentages (0-100),
    * so we need to convert from DMX values (0-255).
    */
